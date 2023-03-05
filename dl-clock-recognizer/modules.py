@@ -94,7 +94,7 @@ class BaseDataset(Dataset):
         return img
     
     def rotate_180(self, img):
-        img = cv2.rotate(img, cv2.ROTATE_180_CLOCKWISE)
+        img = cv2.rotate(img, cv2.ROTATE_180)
         return img
 
     def rotate_270(self, img):
