@@ -124,9 +124,11 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
         labels = []
         preds  = []
         val_iterator =  tq(val_loader) if configs['TQDM'] else val_loader
+        val_n = 0
         with torch.no_grad():
             for batch in val_iterator:
                 loss, hours, mins = forward_step(batch)
+                val_n += hours.shape[0]
                 val_loss.append(loss.item())
                 
                 # labels
@@ -150,9 +152,9 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
         print(f"-- EPOCH {epoch} --")
         print(f"training   loss : {round(np.mean(train_loss), 4)}")
         print(f"validation loss : {round(np.mean(val_loss)  , 4)}")
-        print(f"validation size : approx. {len(val_iterator)*configs['BATCH_SIZE']}")
-        print(f"current val acc  : {acc}")
-        print(f"best val acc     : {best_acc}")
+        print(f"validation size : {val_n}")
+        print(f"current val acc  : {round(acc, 4)}")
+        print(f"best val acc     : {round(best_acc, 4)}")
         print(f"labels (first 5 items)  : {labels[:5]}")
         print(f"preds  (first 5 items)  : {preds[:5]}")
         
@@ -170,9 +172,10 @@ def inference(configs, model, test_loader):
     model = model.to(configs['DEVICE'])
     
     test_iterator = tq(test_loader) if configs['TQDM'] else test_loader
-    
-    labels = []
-    preds  = []
+
+
+    hours_preds  = []
+    mins_preds   = []
     with torch.no_grad():
         for batch in test_iterator:
             hours, mins = forward_step(batch)
@@ -180,8 +183,11 @@ def inference(configs, model, test_loader):
 
             # preds
             hours_pred = hours.argmax(1).detach().cpu().numpy().astype(str).tolist()
+            hours_pred = [h_pr.zfill(2) for h_pr in hours_pred]
             mins_pred  = mins .argmax(1).detach().cpu().numpy().astype(str).tolist()
-            pred  = [ h_pr.zfill(2) + m_pr.zfill(2) for h_pr, m_pr in zip(hours_pred, mins_pred) ]
-            preds.extend(pred)
+            mins_pred  = [m_pr.zfill(2) for m_pr in mins_pred]
+
+            hours_preds.extend(hours_pred)
+            mins_preds. extend(mins_pred)
         
-    return preds
+    return hours_preds, mins_preds
