@@ -2,7 +2,7 @@ from loadlibs import *
 
 # =====================================================================
 class ClockClassifier(torch.nn.Module):
-    def __init__(self, backbone):
+    def __init__(self, backbone, pooler_output_size=512):
         super().__init__()
         self.name = 'ClockClassifier'
         
@@ -21,11 +21,11 @@ class ClockClassifier(torch.nn.Module):
         
         self.hour_classifier = torch.nn.Linear(
             # 1408, 12
-            512, 12
+            pooler_output_size, 12
         )
         self.mins_classifier = torch.nn.Linear(
             # 1408, 60
-            512, 60
+            pooler_output_size, 60
         )
         
     def forward(self, x):
@@ -77,7 +77,7 @@ class BaseDataset(Dataset):
             return ToTensorV2()(image=x)['image'].float(), y1, y2
         
         else: # 'test'
-            y1 = torch.tensor(self.Y1[idx])
+            y1 = torch.tensor(self.Y1[idx]-1) # [1,12] range to [0,11] range
             y2 = torch.tensor(self.Y2[idx])
             
             return ToTensorV2()(image=x)['image'].float(), y1, y2

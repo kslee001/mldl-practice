@@ -5,16 +5,16 @@ import functions
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
-# ========= CONFIGURATAION ===================
-backbone = 'resnet18'
+# ========= CONFIGURATION ===================
+backbone = 'repvgg_b1'
+pooler_output_size = 512 # 512 if backbone == 'resnet18'
+pooler_output_size = 2048 if backbone == 'repvgg_b1' else pooler_output_size
 project_name = 'clock'
 
 configs = dict()
-
-
 configs['BATCH_SIZE'] = 128
 configs['LEARNING_RATE'] = 0.001
-configs['EPOCHS'] = 10
+configs['EPOCHS'] = 20
 configs['TEST_SIZE'] = 0.2
 configs['SEED'] = 1203
 configs['WEIGHT_DECAY'] = 0.001
@@ -38,12 +38,12 @@ def main():
     train_loader, val_loader, test1_loader, test2_loader = functions.prepare_loaders(configs, train, test1, test2)
 
     # set training environment
-    model = modules.ClockClassifier(backbone) # backbone
+    model = modules.ClockClassifier(backbone, pooler_output_size) # backbone
     optimizer = torch.optim.Adam(model.parameters(), lr = configs['LEARNING_RATE'])
     criterion1 = torch.nn.CrossEntropyLoss()
     criterion2 = torch.nn.CrossEntropyLoss()
     scheduler = None
-    best_model = functions.train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train_loader, val_loader)    
+    best_model, train_loss_tracker, valid_loss_tracker, valid_acc_tracker = functions.train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train_loader, val_loader)    
     
     # Inference
     hours_preds1, mins_preds1 = functions.inference(configs, best_model, test1_loader)
@@ -53,12 +53,12 @@ def main():
     # save outputs
     test1['hour_pred'] = hours_preds1
     test1['min_pred']  = mins_preds1    
-    test1['label'] = test1['hour'].astype(str) + test1['min'].astype(str)
+    test1['label'] = test1['hour'].astype(str).str.zfill(2) + test1['min'].astype(str).str.zfill(2)
     test1['pred']  = test1['hour_pred'].astype(str) + test1['min_pred'].astype(str)
 
     test2['hour_pred'] = hours_preds2
     test2['min_pred']  = mins_preds2
-    test2['label'] = test2['hour'].astype(str) + test2['min'].astype(str)
+    test2['label'] = test2['hour'].astype(str).str.zfill(2) + test2['min'].astype(str).str.zfill(2)
     test2['pred']  = test2['hour_pred'].astype(str) + test2['min_pred'].astype(str)
     
     today = datetime.today()
@@ -72,6 +72,12 @@ def main():
     
     test1.to_csv(f"output_test1_{today}.csv", encoding='utf8', index=False)
     test2.to_csv(f"output_test2_{today}.csv", encoding='utf8', index=False)
+    
+    loss_acc_records = pd.DataFrame(columns = ['train_loss', 'valid_loss', 'valid_acc'])
+    loss_acc_records['train_loss'] =  train_loss_tracker
+    loss_acc_records['valid_loss'] =  valid_loss_tracker
+    loss_acc_records['valid_acc']  =  valid_acc_tracker
+    loss_acc_records.to_csv(f"train_state_{today}.csv", encoding='utf8', index=False)
 
     return 
     

@@ -88,6 +88,11 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
         loss = loss1+loss2
         return loss, hours, mins 
 
+
+    train_loss_tracker = []
+    valid_loss_tracker = []
+    valid_acc_tracker  = []
+
     best_loss = 999999
     best_acc  = 0.0
     best_model = None
@@ -114,7 +119,7 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
             loss.backward()
             optimizer.step()
             train_loss.append(loss.item())
-
+            
         if scheduler is not None:
             scheduler.step()
             
@@ -131,6 +136,7 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
                 val_n += hours.shape[0]
                 val_loss.append(loss.item())
                 
+                
                 # labels
                 y1 = batch[1].detach().cpu().numpy().astype(str).tolist()
                 y2 = batch[2].detach().cpu().numpy().astype(str).tolist()
@@ -138,28 +144,37 @@ def train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train
                 labels.extend(label)
                 
                 # preds
-                hours_pred = hours.argmax(1).detach().cpu().numpy().astype(str).tolist()
+                hours_pred = hours.argmax(1)
+                # hours_pred.add_(1) # validation 에서는 +1 해줄 필요 없음 
+                hours_pred = hours_pred.detach().cpu().numpy().astype(str).tolist()
                 mins_pred  = mins .argmax(1).detach().cpu().numpy().astype(str).tolist()
                 pred  = [ h_pr.zfill(2) + m_pr.zfill(2) for h_pr, m_pr in zip(hours_pred, mins_pred) ]
                 preds.extend(pred)
 
         # accuracy
         acc = accuracy_score(label, pred)
+        
         if acc > best_acc:
             best_acc = acc
             best_model = model
             
+        train_loss = round(np.mean(train_loss), 4)
+        val_loss   = round(np.mean(val_loss)  , 4)
+        val_acc    = round(acc, 4)
         print(f"-- EPOCH {epoch} --")
-        print(f"training   loss : {round(np.mean(train_loss), 4)}")
-        print(f"validation loss : {round(np.mean(val_loss)  , 4)}")
+        print(f"training   loss : {train_loss}")
+        print(f"validation loss : {val_loss}")
         print(f"validation size : {val_n}")
-        print(f"current val acc  : {round(acc, 4)}")
+        print(f"current val acc  : {val_acc}")
         print(f"best val acc     : {round(best_acc, 4)}")
         print(f"labels (first 5 items)  : {labels[:5]}")
         print(f"preds  (first 5 items)  : {preds[:5]}")
+        train_loss_tracker.append(train_loss)
+        valid_loss_tracker.append(val_loss)
+        valid_acc_tracker.append(val_acc)
         
     
-    return best_model
+    return best_model, train_loss_tracker, valid_loss_tracker, valid_acc_tracker
 
 
 def inference(configs, model, test_loader):
@@ -170,24 +185,24 @@ def inference(configs, model, test_loader):
         return hours, mins 
     
     model = model.to(configs['DEVICE'])
-    
     test_iterator = tq(test_loader) if configs['TQDM'] else test_loader
-
 
     hours_preds  = []
     mins_preds   = []
     with torch.no_grad():
         for batch in test_iterator:
-            hours, mins = forward_step(batch)
-            hours = hours + 1  #[0, 11] range to [1,12] range
-
-            # preds
-            hours_pred = hours.argmax(1).detach().cpu().numpy().astype(str).tolist()
+            hours, mins = forward_step(batch) # predictions
+            
+            # store predictions
+            hours_pred = hours.argmax(1)
+            hours_pred.add_(1) #[0, 11] range to [1,12] range
+            hours_pred = hours_pred.detach().cpu().numpy().astype(str).tolist()
             hours_pred = [h_pr.zfill(2) for h_pr in hours_pred]
+            hours_preds.extend(hours_pred)
+            
             mins_pred  = mins .argmax(1).detach().cpu().numpy().astype(str).tolist()
             mins_pred  = [m_pr.zfill(2) for m_pr in mins_pred]
+            mins_preds.extend(mins_pred)
 
-            hours_preds.extend(hours_pred)
-            mins_preds. extend(mins_pred)
         
     return hours_preds, mins_preds
