@@ -1,12 +1,13 @@
 from loadlibs import *
 import modules
 import functions
+import schedulers
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
 # ========= CONFIGURATION ===================
-backbone = 'repvgg_b1'
+backbone = 'resnet18'
 pooler_output_size = 512 # 512 if backbone == 'resnet18'
 pooler_output_size = 2048 if backbone == 'repvgg_b1' else pooler_output_size
 project_name = 'clock'
@@ -14,7 +15,7 @@ project_name = 'clock'
 configs = dict()
 configs['BATCH_SIZE'] = 128
 configs['LEARNING_RATE'] = 0.001
-configs['EPOCHS'] = 20
+configs['EPOCHS'] = 40
 configs['TEST_SIZE'] = 0.2
 configs['SEED'] = 1203
 configs['WEIGHT_DECAY'] = 0.001
@@ -42,7 +43,14 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr = configs['LEARNING_RATE'])
     criterion1 = torch.nn.CrossEntropyLoss()
     criterion2 = torch.nn.CrossEntropyLoss()
-    scheduler = None
+    scheduler = schedulers.CosineAnnealingWarmUpRestarts(
+        optimizer=optimizer,
+        T_0=20,
+        T_up=5, # warm-up iteration
+        T_mult=1,
+        eta_max=configs['LEARNING_RATE'],
+        gamma=0.5, # learning rate decay for each restart
+    )
     best_model, train_loss_tracker, valid_loss_tracker, valid_acc_tracker = functions.train_fn(configs, model, criterion1, criterion2, optimizer, scheduler, train_loader, val_loader)    
     
     # Inference
