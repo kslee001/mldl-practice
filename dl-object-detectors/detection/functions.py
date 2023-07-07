@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 
 
 # private
-from modules import BaseDataset
+from dataset import BaseDataset
 
 
 voc_labels = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',

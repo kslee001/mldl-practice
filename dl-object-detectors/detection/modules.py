@@ -1,13 +1,6 @@
 import torch
 import torch.nn.functional as F
-
 from math import sqrt
-
-import numpy as np
-import cv2
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-
 
 # private
 import detection_utils
@@ -16,9 +9,9 @@ import detection_utils
 
 
 class Conv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False):
         super().__init__()
-        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation)
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, bias=False)
 
     def forward(self, x):
         return F.relu(self.conv(x))
@@ -28,35 +21,36 @@ class VGG(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = torch.nn.Sequential(
-            Conv(3, 64),
-            Conv(64, 64))
+            Conv(3, 64, kernel_size=3, padding=1, stride=1),
+            Conv(64, 64, kernel_size=3, padding=1, stride=1))
         self.pool1 = torch.nn.MaxPool2d(2, 2)
 
         self.conv2 = torch.nn.Sequential(
-            Conv(64, 128),
-            Conv(128, 128))
+            Conv(64, 128, kernel_size=3, padding=1, stride=1),
+            Conv(128, 128, kernel_size=3, padding=1, stride=1))
         self.pool2 = torch.nn.MaxPool2d(2, 2)
 
         self.conv3 = torch.nn.Sequential(
-            Conv(128, 256),
-            Conv(256, 256),
-            Conv(256, 256))
-        self.pool3 = torch.nn.MaxPool2d(2, 2, ceil_mode=True),
+            Conv(128, 256, kernel_size=3, padding=1, stride=1),
+            Conv(256, 256, kernel_size=3, padding=1, stride=1),
+            Conv(256, 256, kernel_size=3, padding=1, stride=1))
+        self.pool3 = torch.nn.MaxPool2d(2, 2, ceil_mode=True)
 
         self.conv4 = torch.nn.Sequential(
-            Conv(256, 512),
-            Conv(512, 512),
-            Conv(512, 512))
-        self.pool4 = torch.nn.MaxPool2d(2, 2),
+            Conv(256, 512, kernel_size=3, padding=1, stride=1),
+            Conv(512, 512, kernel_size=3, padding=1, stride=1),
+            Conv(512, 512, kernel_size=3, padding=1, stride=1))
+        self.pool4 = torch.nn.MaxPool2d(2, 2)
 
         self.conv5 = torch.nn.Sequential(
-            Conv(512, 512),
-            Conv(512, 512),
-            Conv(512, 512))
-        self.pool5 = torch.nn.MaxPool2d(3, 1, padding=1)
+            Conv(512, 512, kernel_size=3, padding=1, stride=1),
+            Conv(512, 512, kernel_size=3, padding=1, stride=1),
+            Conv(512, 512, kernel_size=3, padding=1, stride=1))
+        self.pool5 = torch.nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
 
-        self.conv6 = Conv(512, 1024, padding=6, dilation=6)
-        self.conv7 = Conv(1024, 1024, kernel_size=1)
+        self.conv6 = Conv(512, 1024, kernel_size=3, stride=1, padding=6, dilation=6)
+        self.conv7 = Conv(1024, 1024, kernel_size=1, stride=1, padding=0) 
+        # padding= 0 중요 ! Conv는 padding default가 1
 
     def forward(self, x):
         x = self.conv1(x)
@@ -73,10 +67,12 @@ class VGG(torch.nn.Module):
         x = self.pool4(x)
 
         x = self.conv5(x)
-        x = self.pool5(x)
+        x = self.pool5(x) 
+        # (B, 512, 19, 19) here
 
         x = self.conv6(x)
         feat7 = self.conv7(x)
+
 
         return feat4, feat7
 
@@ -98,7 +94,7 @@ class AuxConv(torch.nn.Module):
         
         self.conv11 = torch.nn.Sequential(
             Conv(256, 128, kernel_size=1, padding=0),
-            Conv(256, 128, kernel_size=3, padding=0))
+            Conv(128, 256, kernel_size=3, padding=0))
             
     def forward(self, feat7):
         x = self.conv8(feat7)
@@ -129,23 +125,31 @@ class PredConv(torch.nn.Module):
             "feat10":4,
             "feat11":4,
         }
+        num_filters = {
+            "feat4":512,
+            "feat7":1024,
+            "feat8":512,
+            "feat9":256,
+            "feat10":256,
+            "feat11":256,
+        }
 
         # Localization prediction convolutions (predict offsets w.r.t prior-boxes)
-        self.loc4 = Conv(512, num_boxes["feet4"]*4, kernel_size=3, padding=1)
-        self.loc7 = Conv(1024, num_boxes["feet7"]*4, kernel_size=3, padding=1)
-        self.loc8 = Conv(1024, num_boxes["feet8"]*4, kernel_size=3, padding=1)
-        self.loc9 = Conv(1024, num_boxes["feet9"]*4, kernel_size=3, padding=1)
-        self.loc10 = Conv(1024, num_boxes["feet10"]*4, kernel_size=3, padding=1)
-        self.loc11 = Conv(1024, num_boxes["feet11"]*4, kernel_size=3, padding=1)
+        self.loc4 = torch.nn.Conv2d(num_filters["feat4"], num_boxes["feat4"]*4, kernel_size=3, padding=1)
+        self.loc7 = torch.nn.Conv2d(num_filters["feat7"], num_boxes["feat7"]*4, kernel_size=3, padding=1)
+        self.loc8 = torch.nn.Conv2d(num_filters["feat8"], num_boxes["feat8"]*4, kernel_size=3, padding=1)
+        self.loc9 = torch.nn.Conv2d(num_filters["feat9"], num_boxes["feat9"]*4, kernel_size=3, padding=1)
+        self.loc10 = torch.nn.Conv2d(num_filters["feat10"], num_boxes["feat10"]*4, kernel_size=3, padding=1)
+        self.loc11 = torch.nn.Conv2d(num_filters["feat11"], num_boxes["feat11"]*4, kernel_size=3, padding=1)
 
         
         # Class prediction convolutions (predict classes in localization boxes)
-        self.class4 = Conv(512, num_boxes["feet4"]*num_classes, kernel_size=3, padding=1)
-        self.class7 = Conv(1024, num_boxes["feet7"]*num_classes, kernel_size=3, padding=1)
-        self.class8 = Conv(512, num_boxes["feet8"]*num_classes, kernel_size=3, padding=1)
-        self.class9 = Conv(256, num_boxes["feet9"]*num_classes, kernel_size=3, padding=1)
-        self.class10 = Conv(256, num_boxes["feet10"]*num_classes, kernel_size=3, padding=1)
-        self.class11 = Conv(256, num_boxes["feet11"]*num_classes, kernel_size=3, padding=1)
+        self.class4 = torch.nn.Conv2d(num_filters["feat4"], num_boxes["feat4"]*num_classes, kernel_size=3, padding=1)
+        self.class7 = torch.nn.Conv2d(num_filters["feat7"], num_boxes["feat7"]*num_classes, kernel_size=3, padding=1)
+        self.class8 = torch.nn.Conv2d(num_filters["feat8"], num_boxes["feat8"]*num_classes, kernel_size=3, padding=1)
+        self.class9 = torch.nn.Conv2d(num_filters["feat9"], num_boxes["feat9"]*num_classes, kernel_size=3, padding=1)
+        self.class10 = torch.nn.Conv2d(num_filters["feat10"], num_boxes["feat10"]*num_classes, kernel_size=3, padding=1)
+        self.class11 = torch.nn.Conv2d(num_filters["feat11"], num_boxes["feat11"]*num_classes, kernel_size=3, padding=1)
 
         self.init_conv()
 
@@ -153,7 +157,8 @@ class PredConv(torch.nn.Module):
         for c in self.children():
             if isinstance(c, Conv):
                 torch.nn.init.xavier_uniform_(c.conv.weight)
-                torch.nn.init.constant_(c.conv.bias, 0.)
+                if c.conv.bias is not None:
+                    torch.nn.init.constant_(c.conv.bias, 0.)
         return
 
 
@@ -164,6 +169,7 @@ class PredConv(torch.nn.Module):
         loc4 = loc4.permute(0,2,3,1).contiguous() # (B, 38, 38, 16)
         # (.contiguous() ensures it is stored in a contiguous chunk of memory, needed for .view() below)
         loc4 = loc4.view(B, -1, 4) # (B, 5776, 4), there are a total 5776 boxes on this feature map
+
 
         loc7 = self.loc7(feat7) # (B, 24, 19, 19)
         loc7 = loc7.permute(0,2,3,1).contiguous() # (B, 19, 19, 24)
@@ -222,10 +228,11 @@ class SSD300(torch.nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         self.num_classes = num_classes
+        self.device = None
 
         self.vgg = VGG()
         self.aux = AuxConv()
-        self.pred = PredConv()
+        self.pred = PredConv(num_classes=num_classes)
 
         self.rescale_factors = torch.nn.Parameter(torch.FloatTensor(1, 512, 1, 1)) # 512 channels in conv4 features
         torch.nn.init.constant_(self.rescale_factors, 20)
@@ -260,7 +267,7 @@ class SSD300(torch.nn.Module):
         return locs, classes
 
 
-    def create_prior_boxes(self, device):
+    def create_prior_boxes(self):
         fmap_dims = {
             "feat4":38,
             "feat7":19,
@@ -291,13 +298,13 @@ class SSD300(torch.nn.Module):
 
         prior_boxes = []
 
-        for k, fmap_name in enumerate(fmap_names): # index, "feet4"
-            for y_ in range(fmap_dims[fmap_name]): # "feet4"-> 38
-                for x_ in range(fmap_dims[fmap_name]): # "feet4" -> 38  (feature map sizes, y, x)
+        for k, fmap_name in enumerate(fmap_names): # index, "feat4"
+            for y_ in range(fmap_dims[fmap_name]): # "feat4"-> 38
+                for x_ in range(fmap_dims[fmap_name]): # "feat4" -> 38  (feature map sizes, y, x)
                     cx = (x_ + 0.5)/fmap_dims[fmap_name]
                     cy = (y_ + 0.5)/fmap_dims[fmap_name]
 
-                    for ratio in aspect_ratios[fmap_name]: # "feet4" -> ratio : 1.0, 2.0, 0.5
+                    for ratio in aspect_ratios[fmap_name]: # "feat4" -> ratio : 1.0, 2.0, 0.5
                         # prior boxes
                         prior_boxes.append([
                             cx, 
@@ -307,22 +314,30 @@ class SSD300(torch.nn.Module):
                         ])
 
                         # additional prior boxes
-                        if ratio == 1.0:
-                            if k < len(fmap_names):
-                                additional_scale = sqrt(
-                                    obj_scales[fmap_names[k]] # "feat4" -> "feat7"'s obj_scales
-                                    * obj_scales[fmap_names[k+1]] # e.g., 0.1(feat4) -> 0.2(feat7)
-                                )
-                            else:
-                                additional_scale = 1.0                             
-                        prior_boxes.append([
-                            cx, 
-                            cy,
-                            additional_scale, additional_scale
-                        ])
+                        # if ratio == 1.0:
+                        #     if k+1 < len(fmap_names):
+                        #         additional_scale = sqrt(
+                        #             obj_scales[fmap_names[k]] # "feat4" -> "feat7"'s obj_scales
+                        #             * obj_scales[fmap_names[k+1]] # e.g., 0.1(feat4) -> 0.2(feat7)
+                        #         )
+                        #     else:
+                        #         additional_scale = 1.0                             
+
+                        # prior_boxes.append([
+                        #     cx, 
+                        #     cy,
+                        #     additional_scale, additional_scale
+                        # ])
+                        if ratio == 1.:
+                            try:
+                                additional_scale = sqrt(obj_scales[fmap_name] * obj_scales[fmap_names[k + 1]])
+                            # For the last feature map, there is no "next" feature map
+                            except IndexError:
+                                additional_scale = 1.
+                            prior_boxes.append([cx, cy, additional_scale, additional_scale])
 
         # clamp prior boxes
-        prior_boxes = torch.FloatTensor(prior_boxes).to(device)
+        prior_boxes = torch.FloatTensor(prior_boxes).to(self.device)
         prior_boxes.clamp_(0,1) # (8732, 4)
 
         return prior_boxes
@@ -382,86 +397,58 @@ class SSD300(torch.nn.Module):
                 # Find the overlap between predicted boxes
                 overlap = detection_utils.find_jaccard_overlap(class_decoded_locs, class_decoded_locs)
 
-                # Non-Maximum Suppression (NMS)
-                suppress = torch.zeros((n_above_min_score), dtype=torch.uint8).to(device) #(n_qualified)
+                """Non-Maximum Suppression (NMS)"""
+                suppress = torch.zeros((n_above_min_score), dtype=torch.uint8).to(self.device) #(n_qualified)
 
                 # Consider each box in order of decreasing scores
                 for box in range(class_decoded_locs.size(0)):
+                    # if this box is already marked for suppression
+                    if suppress[box]==1:
+                        continue
+        
+                    # find such boxes whose overlaps (wtih 'this' box) are 
+                    # greater than maximum overlap
+                    suppress = torch.max(suppress, overlap[box] > max_overlap)
+                    # the max operation retains previously suppressed box, like an "OR" operation
                     
+                    # don't suppress this box, even though it has an overlap of 1 with itself
+                    suppress[box] = 0
+                    
+                # Store only unsuppressed boxes for this class
+                current_boxes.append(class_decoded_locs[1-suppress])
+                current_labels.append(torch.LongTensor((1-suppress).sum().item()*[c]).to(self.device))
+                current_scores.append(class_scores[1-suppress])
+                    
+            # if no object in any class is found, store a placeholder for 'background'
+            if len(current_boxes) == 0:
+                current_boxes.append(torch.FloatTensor([[0., 0., 1., 1.]]).to(self.device))
+                current_labels.append(torch.LongTensor([0]).to(self.device))
+                current_scores.append(torch.FloatTensor([0.]).to(self.device))
 
+            # concatenate into single tensors
+            current_boxes = torch.cat(current_boxes, dim=0) # (n_objects, 4)
+            current_labels = torch.cat(current_labels, dim=0) # (n_objects)
+            current_scores = torch.cat(current_scores, dim=0) # (n_objects)
+            n_objects = current_scores.size(0)
 
+            if n_objects > top_k:
+                current_scores, sort_idx = current_scores.sort(dim=0, descending=True)
+                current_scores = current_scores[:top_k] # (top_k)
+                current_boxes = current_boxes[sort_idx][:top_k] # (top_k, 4)
+                current_labels = current_labels[sort_idx][:top_k] # (top_k)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, X, Y, img_size):
-        self.X = X
-        self.Y = Y
-        self.img_size = img_size
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, idx):
-
-        img, bbox = self.transform(
-            x=self.X[idx],
-            bbox=self.Y[idx]['boxes'],
-            img_size=self.img_size,
-        )
-        labels = self.Y[idx]['labels']
-        # diffs = self.Y[idx]['difficulties']
-
-        return img, bbox, labels#, diffs
-
-
-    def transform(self, x, bbox, img_size=(300, 300)):
-        resize_func = A.Resize(height=img_size[0], width=img_size[1]) 
+            # append to lists that store predicted boxes and scores for all images
+            all_images_boxes.append(current_boxes)
+            all_images_labels.append(current_labels)
+            all_images_scores.append(current_scores)
         
-        # image transformation
-        img = cv2.imread(x)
-        h, w = img.shape[:2]
-        img = resize_func(image=img)['image']
-
-        """Some augmentations applied here"""
-
-        img = ToTensorV2()(image=img)['image'] # tensor
-
-        # bbox transformation -> fractional form
-        bbox = np.array(bbox)/np.array([h, w, h, w])
-        bbox = torch.from_numpy(bbox)
-
-        return img, bbox
-
-    def collate_fn(self, batch):
-        imgs = list()
-        boxes = list()
-        labels = list()
-
-        for b in batch:
-            imgs.append(b[0])
-            boxes.append(b[1])
-            labels.append(b[2])
+        return all_images_boxes, all_iamges_labels, all_images_scores
         
-        imgs = torch.stack(imgs, dim=0)
-    
-        return imgs, boxes, labels
+
+
+
+
+
+
+
+
