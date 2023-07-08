@@ -228,7 +228,6 @@ class SSD300(torch.nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         self.num_classes = num_classes
-        self.device = None
 
         self.vgg = VGG()
         self.aux = AuxConv()
@@ -236,8 +235,6 @@ class SSD300(torch.nn.Module):
 
         self.rescale_factors = torch.nn.Parameter(torch.FloatTensor(1, 512, 1, 1)) # 512 channels in conv4 features
         torch.nn.init.constant_(self.rescale_factors, 20)
-
-        self.priors_cxcy = self.create_prior_boxes()
 
 
     def forward(self, x):
@@ -267,7 +264,7 @@ class SSD300(torch.nn.Module):
         return locs, classes
 
 
-    def create_prior_boxes(self):
+    def create_prior_boxes(self, device):
         fmap_dims = {
             "feat4":38,
             "feat7":19,
@@ -337,10 +334,12 @@ class SSD300(torch.nn.Module):
                             prior_boxes.append([cx, cy, additional_scale, additional_scale])
 
         # clamp prior boxes
-        prior_boxes = torch.FloatTensor(prior_boxes).to(self.device)
+        prior_boxes = torch.FloatTensor(prior_boxes).to(device)
         prior_boxes.clamp_(0,1) # (8732, 4)
 
-        return prior_boxes
+
+        # save prior boxes
+        self.priors_cxcy = prior_boxes
 
 
 
@@ -398,7 +397,7 @@ class SSD300(torch.nn.Module):
                 overlap = detection_utils.find_jaccard_overlap(class_decoded_locs, class_decoded_locs)
 
                 """Non-Maximum Suppression (NMS)"""
-                suppress = torch.zeros((n_above_min_score), dtype=torch.uint8).to(self.device) #(n_qualified)
+                suppress = torch.zeros((n_above_min_score), dtype=torch.uint8).to(device) #(n_qualified)
 
                 # Consider each box in order of decreasing scores
                 for box in range(class_decoded_locs.size(0)):
@@ -416,14 +415,14 @@ class SSD300(torch.nn.Module):
                     
                 # Store only unsuppressed boxes for this class
                 current_boxes.append(class_decoded_locs[1-suppress])
-                current_labels.append(torch.LongTensor((1-suppress).sum().item()*[c]).to(self.device))
+                current_labels.append(torch.LongTensor((1-suppress).sum().item()*[c]).to(device))
                 current_scores.append(class_scores[1-suppress])
                     
             # if no object in any class is found, store a placeholder for 'background'
             if len(current_boxes) == 0:
-                current_boxes.append(torch.FloatTensor([[0., 0., 1., 1.]]).to(self.device))
-                current_labels.append(torch.LongTensor([0]).to(self.device))
-                current_scores.append(torch.FloatTensor([0.]).to(self.device))
+                current_boxes.append(torch.FloatTensor([[0., 0., 1., 1.]]).to(device))
+                current_labels.append(torch.LongTensor([0]).to(device))
+                current_scores.append(torch.FloatTensor([0.]).to(device))
 
             # concatenate into single tensors
             current_boxes = torch.cat(current_boxes, dim=0) # (n_objects, 4)
